@@ -1,0 +1,5 @@
+[master]
+10.0.0.11
+
+[controller]
+10.0.0.10	ansible_connection=local
