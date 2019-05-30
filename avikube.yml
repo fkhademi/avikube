@@ -1,0 +1,213 @@
+---
+- hosts: master
+  tasks:
+    - name: Check for Service Account
+      shell: "kubectl describe serviceaccount -n default | grep Name:"
+      register: srvc_account_status
+
+    - name: Create Avi Service Account
+      shell: |
+          kubectl create serviceaccount avi -n default
+          kubectl create -f clusterrole.json
+          kubectl create -f clusterbinding.json
+      when: "'avi' not in srvc_account_status.stdout"
+
+    - name: Get Service Account Secret Name
+      shell: kubectl describe serviceaccount avi -n default | grep Mountable | awk '{print $3'}
+      register: srvc_account_secret_name
+
+    - debug:
+        msg: "{{ srvc_account_secret_name.stdout }}"
+
+    - name: Retrieve Service Account Secret Name
+      shell: "kubectl describe secret {{ srvc_account_secret_name.stdout }} -n default | grep token: | awk '{print $2'}"
+      register: srvc_account_token
+
+    - set_fact: service_account_token={{ srvc_account_token.stdout }}
+
+    - debug:
+        msg: "{{ srvc_account_token.stdout }}"
+
+- hosts: localhost
+  vars_files:
+    - ./avi_details.yml
+  roles:
+    - avinetworks.avisdk
+  tasks:
+    - avi_api_session:
+        api_version: "{{ api_version }}"
+        controller: "{{ controller_ip }}"
+        username: "{{ username }}"
+        password: "{{ password }}"
+        tenant: "{{ tenant | default('admin',true) }}"
+        http_method: get
+        path: network
+        params:
+          name: "NorthSouth"
+      register: ns_results
+
+    - avi_api_session:
+        api_version: "{{ api_version }}"
+        controller: "{{ controller_ip }}"
+        username: "{{ username }}"
+        password: "{{ password }}"
+        tenant: "{{ tenant | default('admin',true) }}"
+        http_method: get
+        path: network
+        params:
+          name: "EastWest"
+      register: ew_results
+  
+    - name: Create North South network
+      avi_network:
+        api_version: "{{ api_version }}"
+        controller: "{{ controller_ip }}"
+        username: "{{ username }}"
+        password: "{{ password }}"
+        tenant: "{{ tenant | default('admin') }}"
+        name: "NorthSouth-Network"
+        configured_subnets: [{"prefix": {"ip_addr": {"type": "V4","addr": "{{ north_south_network }}"},"mask": "{{ north_south_mask }}"},"static_ranges": [{"begin": {"type": "V4","addr": "{{ north_south_start }}"},"end": {"type": "V4","addr": "{{ north_south_end }}"}}]}]
+      when: ns_results.obj.count != 1
+
+    - name: Create East West network
+      avi_network:
+        api_version: "{{ api_version }}"
+        controller: "{{ controller_ip }}"
+        username: "{{ username }}"
+        password: "{{ password }}"
+        tenant: "{{ tenant | default('admin') }}"
+        name: "EastWest-Network"
+        configured_subnets: [{"prefix": {"ip_addr": {"type": "V4","addr": "{{ east_west_network }}"},"mask": "{{ east_west_mask }}"},"static_ranges": [{"begin": {"type": "V4","addr": "{{ east_west_start }}"},"end": {"type": "V4","addr": "{{ east_west_end }}"}}]}]
+      when: ns_results.obj.count != 1
+
+    - avi_api_session:
+        controller: "{{ controller_ip }}"
+        username: "{{ username }}"
+        password: "{{ password }}"
+        tenant: "{{ tenant | default('admin',true) }}"
+        http_method: get
+        path: network
+        params:
+          name: "NorthSouth-Network"
+      register: ns_results
+
+    - avi_api_session:
+        controller: "{{ controller_ip }}"
+        username: "{{ username }}"
+        password: "{{ password }}"
+        tenant: "{{ tenant | default('admin',true) }}"
+        http_method: get
+        path: network
+        params:
+          name: "EastWest-Network"
+      register: ew_results
+
+    - avi_api_session:
+        controller: "{{ controller_ip }}"
+        username: "{{ username }}"
+        password: "{{ password }}"
+        tenant: "{{ tenant | default('admin',true) }}"
+        http_method: get
+        path: ipamdnsproviderprofile
+        params:
+          name: "NorthSouth-IPAM"
+      register: ns_ipam_results
+
+    - avi_api_session:
+        controller: "{{ controller_ip }}"
+        username: "{{ username }}"
+        password: "{{ password }}"
+        tenant: "{{ tenant | default('admin',true) }}"
+        http_method: get
+        path: ipamdnsproviderprofile
+        params:
+          name: "EastWest-IPAM"
+      register: ew_ipam_results
+
+    - name: Create Avi IPAM NorthSouth
+      avi_ipamdnsproviderprofile:
+        controller: "{{ controller_ip }}"
+        username: "{{ username }}"
+        password: "{{ password }}"
+        tenant: "{{ tenant | default('admin') }}"
+        name: "NorthSouth-IPAM"
+        type: "IPAMDNS_TYPE_INTERNAL"
+        internal_profile: {"usable_network_refs": ["{{ ns_results.obj.results.0.url }}"],"ttl": 30}
+      when: ns_ipam_results.obj.count != 1
+
+    - name: Create Avi IPAM EastWest
+      avi_ipamdnsproviderprofile:
+        controller: "{{ controller_ip }}"
+        username: "{{ username }}"
+        password: "{{ password }}"
+        tenant: "{{ tenant | default('admin') }}"
+        name: "EastWest-IPAM"
+        type: "IPAMDNS_TYPE_INTERNAL"
+        internal_profile: {"usable_network_refs": ["{{ ew_results.obj.results.0.url }}"],"ttl": 30}
+      when: ew_ipam_results.obj.count != 1
+
+    - avi_api_session:
+        controller: "{{ controller_ip }}"
+        username: "{{ username }}"
+        password: "{{ password }}"
+        tenant: "{{ tenant | default('admin',true) }}"
+        http_method: get
+        path: ipamdnsproviderprofile
+        params:
+          name: "NorthSouth-IPAM"
+      register: ns_ipam_results
+
+    - avi_api_session:
+        controller: "{{ controller_ip }}"
+        username: "{{ username }}"
+        password: "{{ password }}"
+        tenant: "{{ tenant | default('admin',true) }}"
+        http_method: get
+        path: ipamdnsproviderprofile
+        params:
+          name: "EastWest-IPAM"
+      register: ew_ipam_results
+
+    - name: Avi Controller | Setup cloud Setup
+      avi_cloud:
+        avi_api_update_method: "patch"
+        avi_api_patch_op: "replace"
+        api_version: "{{ api_version }}"
+        controller: "{{ controller_ip }}"
+        username: "{{ username }}"
+        password: "{{ password }}"
+        name: "Default-Cloud"
+        dhcp_enabled: true
+        vtype: CLOUD_OSHIFT_K8S
+        prefer_static_routes: true
+        ipam_provider_ref: "{{ ns_ipam_results.obj.results.0.url }}"
+        dns_provider_ref: ""
+        tenant_ref: "/api/tenant?name=admin"
+        east_west_ipam_provider_ref: "{{ ew_ipam_results.obj.results.0.url }}"
+        oshiftk8s_configuration:
+          east_west_placement_subnet:
+            mask: 16
+            ip_addr:
+              type: V4
+              addr: 172.18.0.1
+          container_port_match_http_service: false
+          service_account_token: "{{ hostvars[groups['master'][0]]['service_account_token'] }}"
+          docker_registry_se:
+            oshift_registry:
+              registry_service:
+                registry_service: "docker-registry"
+                registry_namespace: "default"
+              se_repository_push: "false"
+              registry: "avinetworks/se"
+              private: "false"
+          se_deployment_method: SE_CREATE_POD
+          master_nodes:
+            - "https://{{ kube_master }}:6443"
+          avi_bridge_subnet:
+            mask: 16
+            ip_addr:
+              type: V4
+              addr: 172.18.0.1
+        east_west_dns_provider_ref: ""
+        license_type: LIC_CORES
+        license_tier: ENTERPRISE_18
