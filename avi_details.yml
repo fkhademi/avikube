@@ -1,0 +1,13 @@
+controller_ip: "10.56.0.152"
+kube_master: "10.10.38.243"
+api_version: 17.2.7
+username: admin
+password: avi123$%
+north_south_network: "10.10.38.0"
+north_south_mask: "24"
+north_south_start: "10.10.38.248"
+north_south_end: "10.10.38.253"
+east_west_network: "172.50.0.0"
+east_west_mask: "20"
+east_west_start: "172.50.0.10"
+east_west_end: "172.50.10.10"
